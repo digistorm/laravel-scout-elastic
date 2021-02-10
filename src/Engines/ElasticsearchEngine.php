@@ -70,8 +70,7 @@ class ElasticsearchEngine extends Engine
             $params['body'][] = [
                 'update' => [
                     '_id' => $model->getScoutKey(),
-                    '_index' => $model->searchableAs(),
-                    '_type' => get_class($model),
+                    '_index' => $this->modelIndexName($model, self::INDEX_WRITE),
                 ]
             ];
             $params['body'][] = [
@@ -99,8 +98,7 @@ class ElasticsearchEngine extends Engine
             $params['body'][] = [
                 'delete' => [
                     '_id' => $model->getKey(),
-                    '_index' => $model->searchableAs(),
-                    '_type' => get_class($model),
+                    '_index' => $this->modelIndexName($model, self::INDEX_WRITE),
                 ]
             ];
         });
@@ -140,7 +138,7 @@ class ElasticsearchEngine extends Engine
             'size' => $perPage,
         ]);
 
-        $result['nbPages'] = $result['hits']['total'] / $perPage;
+        $result['nbPages'] = $this->getTotalCount($result) / $perPage;
 
         return $result;
     }
@@ -155,8 +153,7 @@ class ElasticsearchEngine extends Engine
     protected function performSearch(Builder $builder, array $options = [])
     {
         $params = [
-            'index' => $builder->model->searchableAs(),
-            'type' => get_class($builder->model),
+            'index' => $this->modelIndexName($builder->model, self::INDEX_READ),
             'body' => [
                 'query' => [
                     'bool' => [
@@ -235,7 +232,7 @@ class ElasticsearchEngine extends Engine
      */
     public function map(Builder $builder, $results, $model)
     {
-        if ($results['hits']['total'] === 0) {
+        if ($this->getTotalCount($results) === 0) {
             return $model->newCollection();
         }
 
