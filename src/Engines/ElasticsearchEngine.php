@@ -6,9 +6,15 @@ use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\Engine;
 use Elasticsearch\Client as Elastic;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Arr;
+use Tamayo\LaravelScoutElastic\ElasticsearchErrorsEvent;
 
 class ElasticsearchEngine extends Engine
 {
+    const INDEX_READ = 'read';
+    const INDEX_WRITE = 'write';
+
     /**
      * Elastic client.
      *
@@ -17,14 +23,33 @@ class ElasticsearchEngine extends Engine
     protected $elastic;
 
     /**
+     * Index where searches will be made.
+     *
+     * @var string
+     */
+    protected $readIndexBaseName;
+
+    /**
+     * Index where the models will be saved.
+     *
+     * @var string
+     */
+    protected $writeIndexBaseName;
+
+    /**
      * Create a new engine instance.
      *
      * @param  \Elasticsearch\Client  $elastic
+     * @param $readIndexBaseName
+     * @param $writeIndexBaseName
+     *
      * @return void
      */
-    public function __construct(Elastic $elastic)
+    public function __construct(Elastic $elastic, $readIndexBaseName = self::INDEX_READ, $writeIndexBaseName = self::INDEX_READ)
     {
         $this->elastic = $elastic;
+        $this->readIndexBaseName = config('scout.elasticsearch.index-read') ?? $readIndexBaseName;
+        $this->writeIndexBaseName = config('scout.elasticsearch.index-write') ?? $writeIndexBaseName;
     }
 
     /**
@@ -55,7 +80,9 @@ class ElasticsearchEngine extends Engine
             ];
         });
 
-        $this->elastic->bulk($params);
+        $result = $this->elastic->bulk($params);
+
+        $this->checkResultForErrors('update', $result, $params);
     }
 
     /**
@@ -78,7 +105,9 @@ class ElasticsearchEngine extends Engine
             ];
         });
 
-        $this->elastic->bulk($params);
+        $result = $this->elastic->bulk($params);
+
+        $this->checkResultForErrors('delete', $result, $params);
     }
 
     /**
@@ -232,7 +261,13 @@ class ElasticsearchEngine extends Engine
      */
     public function getTotalCount($results)
     {
-        return $results['hits']['total'];
+        $total = Arr::get($results, 'hits.total');
+        // ES version 7+
+        if (is_array($total)) {
+            $total = $total['value'];
+        }
+
+        return $total;
     }
 
     /**
@@ -263,5 +298,84 @@ class ElasticsearchEngine extends Engine
         return collect($builder->orders)->map(function ($order) {
             return [$order['column'] => $order['direction']];
         })->toArray();
+    }
+
+    /**
+     * @param string $indexMode
+     * @param \Illuminate\Database\Eloquent\Model $model
+     * @param array $mapping
+     * @return array
+     */
+    public function putMapping($indexMode, Model $model, array $mapping)
+    {
+        $bodyArray = [
+            'doc' => [
+                // Add dynamic date formats to match the provided date values
+                'dynamic_date_formats' => ['yyyy-MM-dd HH:mm:ss||yyyy-MM-dd'],
+            ],
+        ];
+
+        // If properties is set in the mapping array, set the full body array.
+        if (isset($mapping['properties'])) {
+            $bodyArray['doc'] = $bodyArray['doc'] + $mapping;
+        } else {
+            $bodyArray['doc']['properties'] = $mapping;
+        }
+
+        $params = [
+            'index' => $this->modelIndexName($model, $indexMode),
+            'body' => $bodyArray,
+        ];
+
+        return $this->elastic->indices()->putMapping($params);
+    }
+
+    /**
+     * Get an index name for a particular model instance e.g. 'edustack_read_1_crm_leads'
+     * @param \Illuminate\Database\Eloquent\Model $model
+     * @param string $indexMode
+     * @return string
+     * @throws \Exception
+     */
+    public function modelIndexName(Model $model, $indexMode = self::INDEX_READ)
+    {
+        switch ($indexMode) {
+            case self::INDEX_READ : return $this->readIndexBaseName . '_' . $model->searchableAs();
+            case self::INDEX_WRITE : return $this->writeIndexBaseName . '_' . $model->searchableAs();
+        }
+
+        throw new \Exception('Invalid index type: ' . $indexMode);
+    }
+
+    /**
+     * Raise an event if an Elasticsearch error is encountered so we can see them after
+     *
+     * @param $operation
+     * @param $result
+     * @param $params
+     */
+    protected function checkResultForErrors($operation, $result, $params)
+    {
+        if (isset($result['errors']) && true === $result['errors']) {
+            $errors = [];
+            foreach ($result['items'] as $item) {
+
+                if (isset($item['update']['error'])) {
+                    if (isset($item['update']['error']['type'], $item['update']['error']['reason'])) {
+                        $message = sprintf('[%s] %s', $item['update']['error']['type'], $item['update']['error']['reason']);
+                    } else {
+                        $message = json_encode($item['update'], JSON_PRETTY_PRINT);
+                    }
+
+                    $errors[] = [
+                        'index' => $item['update']['_index'],
+                        'key' => $item['update']['_id'],
+                        'message' => $message,
+                    ];
+                }
+            }
+
+            event(new ElasticsearchErrorsEvent($operation, $errors, $params));
+        }
     }
 }
