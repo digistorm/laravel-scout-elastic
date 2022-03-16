@@ -100,6 +100,7 @@ class ElasticsearchEngine extends Engine
                 'update' => [
                     '_id' => $model->getScoutKey(),
                     '_index' => $this->modelIndexName($model, self::INDEX_WRITE),
+                    '_type' => 'doc',
                 ]
             ];
             $params['body'][] = [
@@ -128,6 +129,7 @@ class ElasticsearchEngine extends Engine
                 'delete' => [
                     '_id' => $model->getKey(),
                     '_index' => $this->modelIndexName($model, self::INDEX_WRITE),
+                    '_type' => 'doc',
                 ]
             ];
         });
@@ -183,6 +185,7 @@ class ElasticsearchEngine extends Engine
     {
         $params = [
             'index' => $this->modelIndexName($builder->model, self::INDEX_READ),
+            'type' => 'doc',
             'body' => [
                 'query' => [
                     'bool' => [
@@ -350,6 +353,7 @@ class ElasticsearchEngine extends Engine
 
         $params = [
             'index' => $this->modelIndexName($model, $indexMode),
+            'type' => 'doc',
             'body' => $bodyArray,
         ];
 
