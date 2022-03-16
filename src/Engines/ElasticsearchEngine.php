@@ -390,16 +390,16 @@ class ElasticsearchEngine extends Engine
             $errors = [];
             foreach ($result['items'] as $item) {
 
-                if (isset($item['update']['error'])) {
-                    if (isset($item['update']['error']['type'], $item['update']['error']['reason'])) {
-                        $message = sprintf('[%s] %s', $item['update']['error']['type'], $item['update']['error']['reason']);
+                if (isset($item[$operation]['error'])) {
+                    if (isset($item[$operation]['error']['type'], $item[$operation]['error']['reason'])) {
+                        $message = sprintf('[%s] %s', $item[$operation]['error']['type'], $item[$operation]['error']['reason']);
                     } else {
-                        $message = json_encode($item['update'], JSON_PRETTY_PRINT);
+                        $message = json_encode($item[$operation], JSON_PRETTY_PRINT);
                     }
 
                     $errors[] = [
-                        'index' => $item['update']['_index'],
-                        'key' => $item['update']['_id'],
+                        'index' => $item[$operation]['_index'],
+                        'key' => $item[$operation]['_id'],
                         'message' => $message,
                     ];
                 }
